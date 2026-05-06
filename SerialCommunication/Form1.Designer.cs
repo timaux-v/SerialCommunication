@@ -36,6 +36,7 @@
             this.tabPageInstellingen = new System.Windows.Forms.TabPage();
             this.checkBoxDtrEnable = new System.Windows.Forms.CheckBox();
             this.checkBoxRtsEnable = new System.Windows.Forms.CheckBox();
+            this.textBoxDebugLog = new System.Windows.Forms.TextBox();
             this.label8 = new System.Windows.Forms.Label();
             this.groupBox3 = new System.Windows.Forms.GroupBox();
             this.radioButtonHandshakeXonXoff = new System.Windows.Forms.RadioButton();
@@ -218,6 +219,16 @@
             this.checkBoxRtsEnable.TabIndex = 10;
             this.checkBoxRtsEnable.Text = "RTS Enable";
             this.checkBoxRtsEnable.UseVisualStyleBackColor = true;
+            // 
+            // textBoxDebugLog
+            // 
+            this.textBoxDebugLog.Location = new System.Drawing.Point(20, 320);
+            this.textBoxDebugLog.Multiline = true;
+            this.textBoxDebugLog.Name = "textBoxDebugLog";
+            this.textBoxDebugLog.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
+            this.textBoxDebugLog.Size = new System.Drawing.Size(1120, 150);
+            this.textBoxDebugLog.TabIndex = 12;
+            this.textBoxDebugLog.WordWrap = false;
             // 
             // label8
             // 
@@ -683,6 +694,7 @@
             this.tabPageOefening3.Controls.Add(this.radioButtonDigital7);
             this.tabPageOefening3.Controls.Add(this.radioButtonDigital6);
             this.tabPageOefening3.Controls.Add(this.radioButtonDigital5);
+            this.tabPageOefening3.Controls.Add(this.textBoxDebugLog);
             this.tabPageOefening3.Controls.Add(this.pictureBox3);
             this.tabPageOefening3.Location = new System.Drawing.Point(4, 29);
             this.tabPageOefening3.Margin = new System.Windows.Forms.Padding(4, 5, 4, 5);
@@ -975,6 +987,7 @@
         internal System.Windows.Forms.Label labelGewensteTemp;
         internal System.Windows.Forms.Label label9;
         internal System.Windows.Forms.PictureBox pictureBox5;
+        internal System.Windows.Forms.TextBox textBoxDebugLog;
         private System.Windows.Forms.StatusStrip statusStrip;
         private System.Windows.Forms.ToolStripStatusLabel labelStatus;
     }
