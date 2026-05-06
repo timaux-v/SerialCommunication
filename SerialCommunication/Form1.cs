@@ -119,8 +119,10 @@ namespace SerialCommunication
                     serialPortArduino.WriteLine(commando);
                 }
             }
-            catch 
+            catch (Exception ex)
             {
+                MessageBox.Show("Error opening port: " + ex.Message);
+
 
             }
 
@@ -138,8 +140,10 @@ namespace SerialCommunication
                     serialPortArduino.WriteLine(commando);
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                MessageBox.Show("Error opening port: " + ex.Message);
+
 
             }
         }
@@ -156,9 +160,59 @@ namespace SerialCommunication
                     serialPortArduino.WriteLine(commando);
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                MessageBox.Show("Error opening port: " + ex.Message);
 
+
+            }
+        }
+
+        private void trackBarPWM9_Scroll(object sender, EventArgs e)
+        {
+            try
+            {
+                if (serialPortArduino.IsOpen)
+                {
+                    string commando = "set pwm9 " + trackBarPWM9.Value;
+                    serialPortArduino.WriteLine(commando);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Error sending PWM command: " + ex.Message);
+            }
+        }
+
+        private void trackBarPWM10_Scroll(object sender, EventArgs e)
+        {
+            try
+            {
+                if (serialPortArduino.IsOpen)
+                {
+                    string commando = "set pwm10 " + trackBarPWM10.Value;
+                    serialPortArduino.WriteLine(commando);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Error sending PWM command: " + ex.Message);
+            }
+        }
+
+        private void trackBarPWM11_Scroll(object sender, EventArgs e)
+        {
+            try
+            {
+                if (serialPortArduino.IsOpen)
+                {
+                    string commando = "set pwm11 " + trackBarPWM11.Value;
+                    serialPortArduino.WriteLine(commando);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Error sending PWM command: " + ex.Message);
             }
         }
     }
