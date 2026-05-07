@@ -20,7 +20,7 @@ namespace SerialCommunication
         {
             InitializeComponent();
 
-            // initialize timers for Oefening 3 and 4
+            // initialize timers for Oefening 3, 4 and 5
             timerOefening3 = new System.Windows.Forms.Timer();
             timerOefening3.Interval = 1000;
             timerOefening3.Enabled = false;
@@ -31,8 +31,15 @@ namespace SerialCommunication
             timerOefening4.Enabled = false;
             timerOefening4.Tick += timerOefening4_Tick;
 
+            timerOefening5 = new System.Windows.Forms.Timer();
+            timerOefening5.Interval = 1000;
+            timerOefening5.Enabled = false;
+            timerOefening5.Tick += timerOefening5_Tick;
+
             // ensure tabControl selection change is handled
             tabControl.SelectedIndexChanged += tabControl_SelectedIndexChanged;
+            // synchronise timer enabled state with current selected tab at startup
+            tabControl_SelectedIndexChanged(this, EventArgs.Empty);
         }
 
         // Serial port used to communicate with Arduino. Timeouts set to 1000ms.
@@ -44,8 +51,12 @@ namespace SerialCommunication
 
         private System.Windows.Forms.Timer timerOefening3;
         private System.Windows.Forms.Timer timerOefening4;
+        private System.Windows.Forms.Timer timerOefening5;
         private readonly ConcurrentQueue<int> pendingPinRequests = new ConcurrentQueue<int>();
-        private readonly ConcurrentQueue<bool> pendingAnalogRequests = new ConcurrentQueue<bool>();
+        private readonly ConcurrentQueue<int> pendingAnalogRequests = new ConcurrentQueue<int>();
+        // last received analog readings (nullable) — updated from DataReceived handler
+        private int? lastAnalog0 = null;
+        private int? lastAnalog1 = null;
 
         private void Form1_Load(object sender, EventArgs e)
         {
@@ -264,6 +275,8 @@ namespace SerialCommunication
             DebugLog("Timer3 enabled: " + timerOefening3.Enabled);
             timerOefening4.Enabled = (tabControl.SelectedTab == tabPageOefening4);
             DebugLog("Timer4 enabled: " + timerOefening4.Enabled);
+            timerOefening5.Enabled = (tabControl.SelectedTab == tabPageOefening5);
+            DebugLog("Timer5 enabled: " + timerOefening5.Enabled);
         }
 
         private void timerOefening3_Tick(object sender, EventArgs e)
@@ -321,29 +334,18 @@ namespace SerialCommunication
                 if (serialPortArduino.IsOpen)
                 {
                     DebugLog("serial port is open for analog read");
-                    // clear previous answers
-                    serialPortArduino.ReadExisting();
+                    // clear any complete-line buffer but keep fragments
+                    if (serialReceiveBuffer.Length > 0) serialReceiveBuffer.Clear();
 
-                    // remember we expect an analog response
-                    pendingAnalogRequests.Enqueue(true);
+                    // remember we expect an analog response for a0
+                    pendingAnalogRequests.Enqueue(0);
 
-                    // request analog 0 value
+                    // request analog 0 value; DataReceived will populate lastAnalog0 and labelAnalog0
                     string cmd = "get a0";
                     serialPortArduino.WriteLine(cmd);
                     DebugLog("Sent: " + cmd);
 
-                    // allow device time to respond (DataReceived handler will process it)
-                    System.Threading.Thread.Sleep(200);
-
-                    var resp = serialPortArduino.ReadExisting().Trim();
-                    DebugLog("Resp a0: " + resp);
-
-                    // extract numeric value if present
-                    var m = Regex.Match(resp, "(\\d+)");
-                    var value = m.Success ? m.Groups[1].Value : resp;
-
-                    // update UI label
-                    this.BeginInvoke((Action)(() => labelAnalog0.Text = value));
+                    // do not block here; DataReceived will update labelAnalog0 when response arrives
                 }
                 else
                 {
@@ -353,6 +355,90 @@ namespace SerialCommunication
             catch (Exception ex)
             {
                 MessageBox.Show("Error reading analog0: " + ex.Message);
+            }
+        }
+
+        private void timerOefening5_Tick(object sender, EventArgs e)
+        {
+            try
+            {
+                DebugLog("timerOefening5 tick");
+
+                if (!serialPortArduino.IsOpen)
+                {
+                    DebugLog("serial port not open for Oefening5");
+                    this.BeginInvoke((Action)(() =>
+                    {
+                        labelGewensteTemp.Text = "N/A";
+                        labelHuidigeTemp.Text = "N/A";
+                    }));
+                    // ensure LED off
+                    try { serialPortArduino.WriteLine("set d2 low"); } catch { }
+                    return;
+                }
+
+                // request analog readings for a0 and a1; DataReceived will map values into lastAnalog0/1
+                if (serialReceiveBuffer.Length > 0) serialReceiveBuffer.Clear();
+                pendingAnalogRequests.Enqueue(0);
+                serialPortArduino.WriteLine("get a0");
+                DebugLog("Sent: get a0");
+                pendingAnalogRequests.Enqueue(1);
+                serialPortArduino.WriteLine("get a1");
+                DebugLog("Sent: get a1");
+
+                // give device time to respond
+                System.Threading.Thread.Sleep(250);
+
+                int? rawDesired = lastAnalog0;
+                int? rawCurrent = lastAnalog1;
+
+                if (!rawDesired.HasValue || !rawCurrent.HasValue)
+                {
+                    this.BeginInvoke((Action)(() =>
+                    {
+                        if (!rawDesired.HasValue) labelGewensteTemp.Text = "N/A";
+                        if (!rawCurrent.HasValue) labelHuidigeTemp.Text = "N/A";
+                    }));
+                    return;
+                }
+
+                double slopeDesired = (45.0 - 5.0) / 1023.0; // 40/1023
+                double desiredTemp = rawDesired.Value * slopeDesired + 5.0;
+
+                double slopeCurrent = 500.0 / 1023.0;
+                double currentTemp = rawCurrent.Value * slopeCurrent;
+
+                double desiredRounded = Math.Round(desiredTemp, 1);
+                double currentRounded = Math.Round(currentTemp, 1);
+
+                this.BeginInvoke((Action)(() =>
+                {
+                    labelGewensteTemp.Text = desiredRounded.ToString("F1") + " °C";
+                    labelHuidigeTemp.Text = currentRounded.ToString("F1") + " °C";
+                }));
+
+                // LED control: turn on when current < desired
+                try
+                {
+                    if (currentTemp < desiredTemp)
+                    {
+                        serialPortArduino.WriteLine("set d2 high");
+                        DebugLog("Set d2 high");
+                    }
+                    else
+                    {
+                        serialPortArduino.WriteLine("set d2 low");
+                        DebugLog("Set d2 low");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    DebugLog("Error setting d2: " + ex.Message);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Error in Oefening5 timer: " + ex.Message);
             }
         }
 
@@ -425,13 +511,24 @@ namespace SerialCommunication
                             continue;
                         }
 
-                        // try parse analog like a0:123 or analog0=123
-                        var ma = Regex.Match(l, @"\b(?:a|analog)?\s*0\s*[:=]\s*(\d{1,4})", RegexOptions.IgnoreCase);
+                        // try parse analog like a0:123 or analog0=123 (capture pin)
+                        var ma = Regex.Match(l, @"\b(?:a|analog)?\s*([01])\s*[:=]\s*(\d{1,4})", RegexOptions.IgnoreCase);
                         if (ma.Success)
                         {
-                            var val = ma.Groups[1].Value;
-                            DebugLog("Parsed analog a0: " + val);
-                            labelAnalog0.Text = val;
+                            int apin = int.Parse(ma.Groups[1].Value);
+                            var val = ma.Groups[2].Value;
+                            DebugLog($"Parsed analog a{apin}: {val}");
+                            if (apin == 0)
+                            {
+                                lastAnalog0 = int.Parse(val);
+                                labelAnalog0.Text = val;
+                            }
+                            else if (apin == 1)
+                            {
+                                lastAnalog1 = int.Parse(val);
+                                // update raw numeric display; timer will compute scaled value for Oefening5
+                                labelHuidigeTemp.Text = val;
+                            }
                             continue;
                         }
 
@@ -452,12 +549,21 @@ namespace SerialCommunication
                             }
 
                             // else map to pending analog request if present
-                            bool hadAnalog = pendingAnalogRequests.TryDequeue(out bool ignored);
-                            if (hadAnalog)
+                            int analogPin;
+                            if (pendingAnalogRequests.TryDequeue(out analogPin))
                             {
                                 var val = mNum.Groups[1].Value;
-                                DebugLog("Mapped unlabelled analog response: " + val);
-                                labelAnalog0.Text = val;
+                                DebugLog($"Mapped unlabelled analog response for a{analogPin}: {val}");
+                                if (analogPin == 0)
+                                {
+                                    lastAnalog0 = int.Parse(val);
+                                    labelAnalog0.Text = val;
+                                }
+                                else if (analogPin == 1)
+                                {
+                                    lastAnalog1 = int.Parse(val);
+                                    labelHuidigeTemp.Text = val;
+                                }
                                 continue;
                             }
                         }
