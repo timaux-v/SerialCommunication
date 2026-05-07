@@ -20,11 +20,16 @@ namespace SerialCommunication
         {
             InitializeComponent();
 
-            // initialize timer for Oefening 3
+            // initialize timers for Oefening 3 and 4
             timerOefening3 = new System.Windows.Forms.Timer();
             timerOefening3.Interval = 1000;
             timerOefening3.Enabled = false;
             timerOefening3.Tick += timerOefening3_Tick;
+
+            timerOefening4 = new System.Windows.Forms.Timer();
+            timerOefening4.Interval = 1000;
+            timerOefening4.Enabled = false;
+            timerOefening4.Tick += timerOefening4_Tick;
 
             // ensure tabControl selection change is handled
             tabControl.SelectedIndexChanged += tabControl_SelectedIndexChanged;
@@ -38,7 +43,9 @@ namespace SerialCommunication
         };
 
         private System.Windows.Forms.Timer timerOefening3;
+        private System.Windows.Forms.Timer timerOefening4;
         private readonly ConcurrentQueue<int> pendingPinRequests = new ConcurrentQueue<int>();
+        private readonly ConcurrentQueue<bool> pendingAnalogRequests = new ConcurrentQueue<bool>();
 
         private void Form1_Load(object sender, EventArgs e)
         {
@@ -252,11 +259,11 @@ namespace SerialCommunication
 
         private void tabControl_SelectedIndexChanged(object sender, EventArgs e)
         {
-            // enable timer only when Oefening 3 tab is selected
-            if (tabControl.SelectedTab == tabPageOefening3)
-                timerOefening3.Enabled = true;
-            else
-                timerOefening3.Enabled = false;
+            // enable timers when their respective tabs are selected
+            timerOefening3.Enabled = (tabControl.SelectedTab == tabPageOefening3);
+            DebugLog("Timer3 enabled: " + timerOefening3.Enabled);
+            timerOefening4.Enabled = (tabControl.SelectedTab == tabPageOefening4);
+            DebugLog("Timer4 enabled: " + timerOefening4.Enabled);
         }
 
         private void timerOefening3_Tick(object sender, EventArgs e)
@@ -306,6 +313,49 @@ namespace SerialCommunication
             }
         }
 
+        private void timerOefening4_Tick(object sender, EventArgs e)
+        {
+            try
+            {
+                DebugLog("timerOefening4 tick");
+                if (serialPortArduino.IsOpen)
+                {
+                    DebugLog("serial port is open for analog read");
+                    // clear previous answers
+                    serialPortArduino.ReadExisting();
+
+                    // remember we expect an analog response
+                    pendingAnalogRequests.Enqueue(true);
+
+                    // request analog 0 value
+                    string cmd = "get a0";
+                    serialPortArduino.WriteLine(cmd);
+                    DebugLog("Sent: " + cmd);
+
+                    // allow device time to respond (DataReceived handler will process it)
+                    System.Threading.Thread.Sleep(200);
+
+                    var resp = serialPortArduino.ReadExisting().Trim();
+                    DebugLog("Resp a0: " + resp);
+
+                    // extract numeric value if present
+                    var m = Regex.Match(resp, "(\\d+)");
+                    var value = m.Success ? m.Groups[1].Value : resp;
+
+                    // update UI label
+                    this.BeginInvoke((Action)(() => labelAnalog0.Text = value));
+                }
+                else
+                {
+                    DebugLog("serial port is NOT open when timer ticked");
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Error reading analog0: " + ex.Message);
+            }
+        }
+
         private void DebugLog(string message)
         {
             try
@@ -326,59 +376,95 @@ namespace SerialCommunication
             catch { }
         }
 
+        private StringBuilder serialReceiveBuffer = new StringBuilder();
+
         private void SerialPortArduino_DataReceived(object sender, SerialDataReceivedEventArgs e)
         {
             try
             {
-                string data = serialPortArduino.ReadExisting();
-                if (!string.IsNullOrEmpty(data))
+                string chunk = serialPortArduino.ReadExisting();
+                if (string.IsNullOrEmpty(chunk)) return;
+
+                DebugLog("Received raw (chunk): " + chunk.Trim());
+
+                // accumulate chunk into buffer and extract complete lines ending with \r or \n
+                serialReceiveBuffer.Append(chunk);
+                var all = serialReceiveBuffer.ToString();
+                // determine if the buffer ends with a newline (CR or LF)
+                bool endsWithNewline = all.EndsWith("\n") || all.EndsWith("\r");
+                var parts = all.Split(new[] { '\r', '\n' });
+                int countToProcess = endsWithNewline ? parts.Length : Math.Max(0, parts.Length - 1);
+                var linesToProcess = parts.Take(countToProcess).Where(s => !string.IsNullOrEmpty(s)).ToArray();
+
+                // keep leftover (incomplete last part) in buffer
+                serialReceiveBuffer.Clear();
+                if (!endsWithNewline && parts.Length > 0)
                 {
-                    DebugLog("Received raw: " + data.Trim());
-                    this.BeginInvoke((Action)(() =>
+                    serialReceiveBuffer.Append(parts.Last());
+                }
+
+                if (linesToProcess.Length == 0) return;
+
+                this.BeginInvoke((Action)(() =>
+                {
+                    // update status label with a preview of the last complete lines
+                    labelStatus.Text = "Received: " + string.Join(" ", linesToProcess).Replace("\r", " ").Replace("\n", " ").Trim();
+
+                    foreach (var line in linesToProcess)
                     {
-                        // update status label with received data preview
-                        labelStatus.Text = "Received: " + data.Trim().Replace("\r", " ").Replace("\n", " ").Trim();
+                        var l = line.Trim();
                         // try parse lines like d5:1 or digital5:1
-                        var lines = data.Split(new[] { '\r','\n' }, StringSplitOptions.RemoveEmptyEntries);
-                        foreach (var line in lines)
+                        var m = Regex.Match(l, @"\b(?:d|digital)?\s*([5-7])\s*[:=]\s*([01])", RegexOptions.IgnoreCase);
+                        if (m.Success)
                         {
-                            var m = Regex.Match(line, @"\b(?:d|digital)?\s*([5-7])\s*[:=]\s*([01])", RegexOptions.IgnoreCase);
-                            if (m.Success)
+                            int pin = int.Parse(m.Groups[1].Value);
+                            bool state = m.Groups[2].Value == "1";
+                            if (pin == 5) radioButtonDigital5.Checked = state;
+                            else if (pin == 6) radioButtonDigital6.Checked = state;
+                            else if (pin == 7) radioButtonDigital7.Checked = state;
+                            continue;
+                        }
+
+                        // try parse analog like a0:123 or analog0=123
+                        var ma = Regex.Match(l, @"\b(?:a|analog)?\s*0\s*[:=]\s*(\d{1,4})", RegexOptions.IgnoreCase);
+                        if (ma.Success)
+                        {
+                            var val = ma.Groups[1].Value;
+                            DebugLog("Parsed analog a0: " + val);
+                            labelAnalog0.Text = val;
+                            continue;
+                        }
+
+                        // try bare numeric (could be mapped to pending analog or a pending digital request)
+                        var mNum = Regex.Match(l, "^\\s*(\\d{1,4})\\s*$");
+                        if (mNum.Success)
+                        {
+                            // first try map to a pending digital pin request
+                            int pin;
+                            if (pendingPinRequests.TryDequeue(out pin))
                             {
-                                int pin = int.Parse(m.Groups[1].Value);
-                                bool state = m.Groups[2].Value == "1";
+                                bool state = mNum.Groups[1].Value == "1";
+                                DebugLog($"Mapped unlabelled response for d{pin}: {mNum.Groups[1].Value}");
                                 if (pin == 5) radioButtonDigital5.Checked = state;
                                 else if (pin == 6) radioButtonDigital6.Checked = state;
                                 else if (pin == 7) radioButtonDigital7.Checked = state;
+                                continue;
                             }
-                            else
+
+                            // else map to pending analog request if present
+                            bool hadAnalog = pendingAnalogRequests.TryDequeue(out bool ignored);
+                            if (hadAnalog)
                             {
-                                // try match bare '0' or '1' and map to oldest pending request
-                                var m2 = Regex.Match(line, "^\\s*([01])\\s*$");
-                                if (m2.Success)
-                                {
-                                    int pin;
-                                    if (pendingPinRequests.TryDequeue(out pin))
-                                    {
-                                        bool state = m2.Groups[1].Value == "1";
-                                        DebugLog($"Mapped unlabelled response for d{pin}: {m2.Groups[1].Value}");
-                                        if (pin == 5) radioButtonDigital5.Checked = state;
-                                        else if (pin == 6) radioButtonDigital6.Checked = state;
-                                        else if (pin == 7) radioButtonDigital7.Checked = state;
-                                    }
-                                    else
-                                    {
-                                        DebugLog("No pending pin request to map for line: " + line);
-                                    }
-                                }
-                                else
-                                {
-                                    DebugLog("Unparsed line: " + line);
-                                }
+                                var val = mNum.Groups[1].Value;
+                                DebugLog("Mapped unlabelled analog response: " + val);
+                                labelAnalog0.Text = val;
+                                continue;
                             }
                         }
-                    }));
-                }
+
+                        DebugLog("Unparsed line: " + l);
+                    }
+                }));
             }
             catch (Exception ex)
             {
